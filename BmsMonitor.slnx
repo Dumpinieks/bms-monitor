@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="BmsMonitor.Core/BmsMonitor.Core.csproj" />
+  <Project Path="BmsMonitor/BmsMonitor.csproj" />
+  <Project Path="BmsWidget/BmsWidget.csproj" />
+</Solution>
