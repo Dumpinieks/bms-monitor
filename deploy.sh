@@ -18,7 +18,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/bms-monitor"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SERVICE="bms-monitor.service"
-PLASMOID_ID="org.bmsmonitor.widget"
+PLASMOID_ID="org.dumpinieks.bmsmonitor.widget"
 
 ADDRESS=""
 INTERVAL=30
@@ -89,7 +89,7 @@ mkdir -p "$UNIT_DIR"
 cat > "$UNIT_DIR/$SERVICE" <<EOF
 [Unit]
 Description=Bluetooth BMS monitor (publishes readings for the Plasma widget)
-Documentation=https://github.com/
+Documentation=https://github.com/Dumpinieks/bms-monitor
 After=bluetooth.target graphical-session.target
 Wants=bluetooth.target
 PartOf=graphical-session.target

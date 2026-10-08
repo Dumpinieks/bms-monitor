@@ -1,7 +1,7 @@
 {
     "KPackageStructure": "Plasma/Applet",
     "KPlugin": {
-        "Id": "org.bmsmonitor.widget",
+        "Id": "org.dumpinieks.bmsmonitor.widget",
         "Name": "Bluetooth BMS",
         "Description": "Battery charge, power and estimated time left from a Bluetooth BMS",
         "Icon": "battery",

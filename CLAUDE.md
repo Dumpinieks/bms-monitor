@@ -134,7 +134,7 @@ connection would fight the poller for the radio.
 - Staleness uses the same rule as the Windows widget: `online == false`, or older than
   `max(30 s, interval * 4)`.
 
-Verify changes with `plasmawindowed org.bmsmonitor.widget` after
+Verify changes with `plasmawindowed org.dumpinieks.bmsmonitor.widget` after
 `kpackagetool6 --type Plasma/Applet --upgrade plasmoid`. **Its output goes to the journal, not the
 terminal** (`journalctl --user --since "1 min ago" | grep plasmawindowed`), and `console.log` is
 filtered by KDE's logging rules — use `console.warn` when probing.
