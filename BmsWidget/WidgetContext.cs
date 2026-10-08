@@ -1,5 +1,6 @@
 using BmsMonitor;
 using BmsMonitor.Ble;
+using BmsMonitor.Net;
 using Microsoft.Win32;
 
 namespace BmsWidget;
@@ -23,6 +24,11 @@ sealed class WidgetContext : ApplicationContext
 
     readonly EventWaitHandle _exitSignal;
     readonly RegisteredWaitHandle _exitWait;
+
+    // Outlive the poller, which is rebuilt by "Search for a different BMS".
+    readonly StatusServer? _server;
+    readonly PeerFinder? _peers;
+
     BmsReading? _last;
     string _problem = "searching…";
     Icon? _icon;
@@ -87,6 +93,25 @@ sealed class WidgetContext : ApplicationContext
         _exitWait = ThreadPool.RegisterWaitForSingleObject(_exitSignal, (_, _) => _ui.Post(_ => ExitThread(), null),
             null, Timeout.Infinite, executeOnlyOnce: true);
 
+        // The BMS accepts one Bluetooth connection, so a machine that cannot get it can borrow
+        // readings from here instead. _last is only ever assigned on the UI thread and read on a
+        // thread-pool one; a reference read is atomic, and a reading one tick old is still fine.
+        if (settings.Share)
+        {
+            _server = new StatusServer(
+                () => _last is { } reading
+                    ? BmsStatusSnapshot.From(reading, settings.Threshold, Math.Max(2, settings.IntervalSeconds))
+                    : null,
+                Log.Write,
+                statusPort: settings.SharePort);
+            _server.Start();
+        }
+        if (settings.UsePeers)
+        {
+            // Sharing and consuming at once means answering our own probe; skip ourselves.
+            _peers = new PeerFinder(Log.Write) { ExcludeInstanceId = _server?.InstanceId };
+        }
+
         _staleTimer.Tick += (_, _) => Render();
         _staleTimer.Start();
         Render();
@@ -120,6 +145,7 @@ sealed class WidgetContext : ApplicationContext
             Interval = TimeSpan.FromSeconds(Math.Max(2, _settings.IntervalSeconds)),
             OfflineAlert = TimeSpan.FromMinutes(_settings.OfflineAlertMinutes),
             EstimateWindow = TimeSpan.FromMinutes(Math.Max(1, _settings.EstimateWindowMinutes)),
+            Peers = _peers,
         };
         var poller = new BmsPoller(options, Log.Write);
         var cts = _pollCts;
@@ -221,10 +247,14 @@ sealed class WidgetContext : ApplicationContext
                 _ => "…",
             };
 
+        // A borrowed reading is marked, so a battery that looks stuck is not mistaken for a
+        // local Bluetooth problem. The panel stays uncluttered; the tooltip carries it.
+        var via = r.PeerName is { } peer ? $" · via {peer}" : "";
+
         _panel.SetContent(new PanelContent(percent, power, detail, powerShort, detailShort, level, stale));
         SetTrayIcon($"{Math.Min(99, Math.Round(soc)):0}", stale ? theme.SecondaryText : theme.For(level),
-            $"Battery {soc:0.#}% · {power}\n{detail}");
-        _details.Text = $"{r.Status}\nUpdated {r.Time:HH:mm:ss}";
+            $"Battery {soc:0.#}% · {power}\n{detail}{via}");
+        _details.Text = $"{r.Status}\nUpdated {r.Time:HH:mm:ss}{via}";
     }
 
     static string ShortDuration(TimeSpan t) => Format.Duration(t).Replace(" ", "").Replace("min", "m");
@@ -269,6 +299,7 @@ sealed class WidgetContext : ApplicationContext
         _pollCts.Cancel();
         // Give the poller a moment to close the Bluetooth session, so the next start can connect right away.
         _pollTask.Wait(TimeSpan.FromSeconds(3));
+        _server?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
         _staleTimer.Dispose();
         _exitWait.Unregister(null);
         _exitSignal.Dispose();

@@ -171,6 +171,12 @@ BmsMonitor monitor --status-file --peers
 BmsMonitor peers              # list instances sharing on this network
 ```
 
+The Windows widget does the same through `%LOCALAPPDATA%\BmsWidget\settings.json` (tray menu →
+*Open settings file*, then restart it): `Share`, `SharePort`, `UsePeers`. Both are off by default.
+A widget with `UsePeers` keeps showing the battery when something else has taken the Bluetooth
+connection, and marks the reading `via <name>` in its tray tooltip and details. One instance can be
+both at once — it will not discover itself.
+
 `--peers` only kicks in when the local Bluetooth read fails, so a machine in range always prefers
 its own link. Borrowed readings are labelled with the instance they came from — the widget shows
 `via <name>`, and the status file carries `"source"` plus the sharing machine's `address` and

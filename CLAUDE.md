@@ -135,6 +135,11 @@ network instead of declaring the battery offline. `PollerOptions.Peers` turns it
 Both ports have to be open in the host firewall; a blocked UDP 17646 looks exactly like "no peers
 answered". `BmsMonitor peers` is the quickest way to tell the two apart.
 
+`Net/` is platform-neutral (BCL sockets only), so it compiles into both TFMs and the feature is the
+same on either OS — the console tool gets it from `--share`/`--peers`, the Windows widget from the
+`Share`/`SharePort`/`UsePeers` settings. In `WidgetContext` the server and finder are built once in
+the constructor, not in `StartPolling`, which is re-run by "Search for a different BMS".
+
 ## Plasma widget (`plasmoid/`, KDE)
 
 A KPackage `Plasma/Applet` written in QML. **It never speaks Bluetooth.** The BMS allows a single BLE

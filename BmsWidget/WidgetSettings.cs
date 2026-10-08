@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BmsMonitor.Net;
 
 namespace BmsWidget;
 
@@ -27,6 +28,16 @@ sealed class WidgetSettings
     public int EstimateWindowMinutes { get; set; } = 5;
     public int OfflineAlertMinutes { get; set; }
     public bool ShowPanel { get; set; } = true;
+
+    /// <summary>
+    /// Share readings with other machines on the LAN, which cannot otherwise get at the BMS:
+    /// it accepts a single Bluetooth connection. Off by default - the endpoint is unauthenticated.
+    /// </summary>
+    public bool Share { get; set; }
+    public int SharePort { get; set; } = PeerProtocol.DefaultStatusPort;
+
+    /// <summary>Borrow readings from a sharing machine when the BMS cannot be read here.</summary>
+    public bool UsePeers { get; set; }
     /// <summary>Distance in pixels between the taskbar's right edge and the panel; null places it next to the tray.</summary>
     public int? PanelOffsetFromRight { get; set; }
     /// <summary>Same for a vertical taskbar: distance from its bottom edge; null places it above the tray.</summary>
