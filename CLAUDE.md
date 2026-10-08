@@ -113,6 +113,28 @@ device.
 - `Dispose` explicitly calls `Disconnect()` — unlike WinRT, dropping the proxy leaves the link up, and
   the BMS only accepts one connection.
 
+## LAN peer fallback (`Net/`)
+
+The BMS answers one client at a time, so when the local Bluetooth read fails the poller asks the
+network instead of declaring the battery offline. `PollerOptions.Peers` turns it on.
+
+- **`StatusServer`** answers UDP discovery probes and serves the snapshot over TCP as
+  `GET /status`. It is a hand-rolled HTTP responder on a `TcpListener` on purpose:
+  `HttpListener` needs an elevated URL ACL on Windows to bind anything but localhost.
+- **`PeerFinder`** probes **255.255.255.255, loopback, and every interface's directed broadcast** —
+  plain limited broadcast alone is dropped by many host firewalls, and loopback is what lets two
+  instances on one machine find each other. Replies are deduplicated by the instance id in the
+  offer, because one host answers once per address it holds (LAN, VPN, loopback).
+- **Readings never relay.** A peer only serves snapshots whose `Source` is null, and `TryFetchAsync`
+  only accepts those, so displayed data is always one hop from the battery. Snapshots older than
+  `PeerFinder.MaxAge` are discarded rather than shown as current.
+- `BmsReading` carries its own `Address`/`Protocol`/`PeerName`, so a borrowed reading reports the
+  *sharing* machine's BMS rather than the local configuration.
+- Sharing failures are logged and swallowed — a busy port must never take the poller down.
+
+Both ports have to be open in the host firewall; a blocked UDP 17646 looks exactly like "no peers
+answered". `BmsMonitor peers` is the quickest way to tell the two apart.
+
 ## Plasma widget (`plasmoid/`, KDE)
 
 A KPackage `Plasma/Applet` written in QML. **It never speaks Bluetooth.** The BMS allows a single BLE

@@ -1,6 +1,7 @@
 using System.Text;
 using BmsMonitor;
 using BmsMonitor.Ble;
+using BmsMonitor.Net;
 using BmsMonitor.Protocols;
 
 Console.OutputEncoding = Encoding.UTF8;
@@ -21,6 +22,7 @@ try
         case "probe": await Probe(options, cts.Token); break;
         case "status": await Status(options, cts.Token); break;
         case "monitor": await Monitor(options, cts.Token); break;
+        case "peers": await Peers(options, cts.Token); break;
         case "test-notify":
             Notifier.Show("BMS battery low", $"Test notification: battery at {options.Threshold}%");
             Console.WriteLine("Notification sent.");
@@ -166,13 +168,13 @@ static async Task Monitor(Options o, CancellationToken ct)
         Hysteresis = o.Hysteresis,
         Interval = o.Interval,
         OfflineAlert = o.OfflineAlert,
+        Peers = o.UsePeers ? new PeerFinder(Log) : null,
     }, Log);
 
     // Optional feed for a desktop widget; the widget cannot connect itself, as the BMS
     // accepts only one BLE connection at a time.
     var status = o.StatusFile is null ? null : new StatusFile(o.StatusFile);
     var interval = (int)o.Interval.TotalSeconds;
-    var address = o.Address;
     var last = new BmsStatusSnapshot { ThresholdPercent = o.Threshold, IntervalSeconds = interval };
     if (status is not null)
     {
@@ -180,7 +182,6 @@ static async Task Monitor(Options o, CancellationToken ct)
         status.Write(last.AsOffline("searching"));
     }
 
-    poller.Connected += connected => address = connected;
     poller.ReadingReceived += r =>
     {
         var extra = new List<string>();
@@ -190,11 +191,19 @@ static async Task Monitor(Options o, CancellationToken ct)
 
         if (status is null)
             return;
-        last = BmsStatusSnapshot.From(r, address is { } a ? BleAddress.Format(a) : null,
-            poller.ProtocolName, o.Threshold, interval);
+        last = BmsStatusSnapshot.From(r, o.Threshold, interval);
         status.Write(last);
     };
     poller.Failed += problem => status?.Write(last.AsOffline(problem));
+
+    // Serving starts regardless of whether we have a reading yet; the server simply
+    // does not answer until it has a locally-read one to share.
+    await using var server = o.SharePort is { } sharePort
+        ? new StatusServer(() => last.Online ? last : null, Log, statusPort: sharePort)
+        : null;
+    server?.Start();
+    if (o.UsePeers)
+        Console.WriteLine("Will fall back to LAN peers when the BMS cannot be read here.");
 
     try
     {
@@ -205,6 +214,32 @@ static async Task Monitor(Options o, CancellationToken ct)
         // Leave the widget showing "offline" rather than a frozen last reading.
         status?.Write(last.AsOffline("monitor stopped"));
     }
+}
+
+static async Task Peers(Options o, CancellationToken ct)
+{
+    var finder = new PeerFinder(Log);
+    Console.WriteLine($"Looking for other BmsMonitor instances on the LAN (UDP {PeerProtocol.DefaultDiscoveryPort})...");
+    var peers = await finder.DiscoverAsync(o.ScanTime > TimeSpan.Zero ? TimeSpan.FromSeconds(2) : null, ct);
+    if (peers.Count == 0)
+    {
+        Console.WriteLine("No peers answered. They must be running with --share, and UDP/TCP must be open between you.");
+        return;
+    }
+
+    foreach (var peer in peers)
+    {
+        var snapshot = await finder.FetchAsync(peer, ct);
+        var age = snapshot is null ? null : (TimeSpan?)(DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(snapshot.UpdatedUnix));
+        var detail = snapshot is null
+            ? "no answer on its status port"
+            : snapshot is { Online: true, SocPercent: { } soc }
+                ? $"SOC {soc:0.#}%" + (snapshot.PowerW is { } w ? $", {Format.Power(w)}" : "") +
+                  (age is { } a ? $" ({a.TotalSeconds:0} s old)" : "")
+                : $"offline ({snapshot.Problem})";
+        Console.WriteLine($"  {peer}  {detail}");
+    }
+    Console.WriteLine($"{peers.Count} peer(s) found.");
 }
 
 /// <summary>For diagnostics: the configured address or the best search candidate, unverified.</summary>
@@ -233,6 +268,10 @@ sealed class Options
     public bool Verbose { get; private set; }
     /// <summary>Where to publish readings for a desktop widget; null disables publishing.</summary>
     public string? StatusFile { get; private set; }
+    /// <summary>Serve readings to other instances on the LAN, on this TCP port.</summary>
+    public int? SharePort { get; private set; }
+    /// <summary>Fall back to LAN peers when the BMS cannot be read here.</summary>
+    public bool UsePeers { get; private set; }
 
     public ConnectOptions ToConnectOptions() => new(Address, Name, Protocol, Verbose) { ScanTime = ScanTime };
 
@@ -260,6 +299,14 @@ sealed class Options
                 case "--scan-time": o.ScanTime = TimeSpan.FromSeconds(NextInt()); break;
                 case "--offline-alert": o.OfflineAlert = TimeSpan.FromMinutes(NextInt()); break;
                 case "--status-file": o.StatusFile = NextOptional() ?? BmsMonitor.StatusFile.DefaultPath; break;
+                case "--share":
+                    o.SharePort = NextOptional() is { } sharePort
+                        ? int.TryParse(sharePort, out var parsed) && parsed is > 0 and <= 65535
+                            ? parsed
+                            : throw new ArgumentException($"Invalid port for --share: {sharePort}")
+                        : PeerProtocol.DefaultStatusPort;
+                    break;
+                case "--peers": o.UsePeers = true; break;
                 case "--verbose" or "-v": o.Verbose = true; break;
                 default: throw new ArgumentException($"Unknown option {args[i]}");
             }
@@ -275,6 +322,7 @@ sealed class Options
           probe                    Connect, dump GATT services and try known protocols (diagnostics)
           status                   Read the BMS once and print it
           monitor                  Poll the BMS and show a desktop notification when SOC drops to the threshold
+          peers                    List other instances sharing readings on the local network
           test-notify              Show a test notification
 
         Options:
@@ -289,6 +337,9 @@ sealed class Options
               --scan-time <sec>    BLE scan duration (default 10)
               --status-file [path] Publish each reading as JSON for a desktop widget to read
                                    (default: $XDG_RUNTIME_DIR/bms-monitor/status.json)
+              --share [port]       Share readings with other instances on the LAN (default port 17645)
+              --peers              When the BMS is unreachable here (its single connection is
+                                   taken), fetch readings from an instance running with --share
           -v, --verbose            Print raw BLE traffic
 
         Example:

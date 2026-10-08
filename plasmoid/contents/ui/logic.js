@@ -64,6 +64,13 @@ function describe(snapshot, stale, readError) {
         var problem = snapshot.problem && snapshot.problem.length > 0 ? snapshot.problem : "offline";
         return problem + " · last reading " + updatedAt(snapshot);
     }
+    // Readings borrowed from another machine over the LAN are marked, so a stale-looking
+    // battery is not mistaken for a local Bluetooth problem.
+    var via = snapshot.source && snapshot.source.length > 0 ? " · via " + snapshot.source : "";
+    return describeState(snapshot) + via;
+}
+
+function describeState(snapshot) {
     switch (snapshot.state) {
     case "Discharging":
         return snapshot.timeLeftSeconds ? formatDuration(snapshot.timeLeftSeconds) + " left" : "estimating…";

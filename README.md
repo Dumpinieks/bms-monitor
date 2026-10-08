@@ -155,6 +155,39 @@ kpackagetool6 --type Plasma/Applet --install plasmoid      # widget, once
 The status file path and refresh interval are configurable in the widget's settings, so the backend
 can publish somewhere else (or on another machine via a shared path).
 
+## Sharing readings over the local network
+
+Most BMS boards accept **one** Bluetooth connection, so a second machine (or the phone app) is
+simply locked out. Instead of showing "offline", an instance can borrow readings from another
+instance that does have the link:
+
+```bash
+# On the machine that reaches the BMS:
+BmsMonitor monitor --status-file --share
+
+# On every other machine:
+BmsMonitor monitor --status-file --peers
+
+BmsMonitor peers              # list instances sharing on this network
+```
+
+`--peers` only kicks in when the local Bluetooth read fails, so a machine in range always prefers
+its own link. Borrowed readings are labelled with the instance they came from — the widget shows
+`via <name>`, and the status file carries `"source"` plus the sharing machine's `address` and
+`protocol`. A peer never passes on a reading it borrowed itself, so data is always one hop from the
+battery, and anything older than 5 minutes is ignored rather than displayed as current.
+
+Discovery is a UDP broadcast on **17646**; the reading is then fetched over TCP **17645** with a
+plain `GET /status`. Both ports must be open between the machines. On NixOS:
+
+```nix
+networking.firewall.allowedUDPPorts = [ 17646 ];
+networking.firewall.allowedTCPPorts = [ 17645 ];
+```
+
+The server is unauthenticated and answers anyone who asks, so only enable `--share` on a network you
+trust — it exposes the battery's charge, voltage, current and the BMS's Bluetooth address.
+
 ## If your BMS isn't recognized
 
 Capture what the Android app sends:

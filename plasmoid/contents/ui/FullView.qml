@@ -137,6 +137,8 @@ PlasmaComponents.Page {
         add(i18n("Alert below"), s.thresholdPercent + "%");
         add(i18n("Protocol"), s.protocol);
         add(i18n("Address"), s.address);
+        // Only present when this machine could not reach the BMS and borrowed the reading.
+        add(i18n("Read by"), s.source);
         add(i18n("Updated"), full.updatedText);
         return out;
     }

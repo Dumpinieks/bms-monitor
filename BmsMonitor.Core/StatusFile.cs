@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BmsMonitor.Protocols;
 
 namespace BmsMonitor;
 
@@ -30,14 +31,19 @@ public sealed record BmsStatusSnapshot
     public string? Address { get; init; }
     public string? Protocol { get; init; }
 
+    /// <summary>
+    /// Name of the LAN peer this reading was fetched from, or null when it was read over
+    /// Bluetooth here. Only null-source snapshots are shared onwards, so readings never relay.
+    /// </summary>
+    public string? Source { get; init; }
+
     /// <summary>Echoed so the widget can colour by the same threshold the poller alerts on.</summary>
     public int ThresholdPercent { get; init; }
 
     /// <summary>Echoed so the widget can tell "stale" from "just between polls".</summary>
     public int IntervalSeconds { get; init; }
 
-    public static BmsStatusSnapshot From(BmsReading reading, string? address, string? protocol,
-        int thresholdPercent, int intervalSeconds) =>
+    public static BmsStatusSnapshot From(BmsReading reading, int thresholdPercent, int intervalSeconds) =>
         new()
         {
             UpdatedUnix = new DateTimeOffset(reading.Time).ToUnixTimeSeconds(),
@@ -53,11 +59,27 @@ public sealed record BmsStatusSnapshot
             Cycles = reading.Status.Cycles,
             TemperaturesC = reading.Status.TemperaturesC,
             TimeLeftSeconds = reading.TimeLeft is { } left ? Math.Round(left.TotalSeconds) : null,
-            Address = address,
-            Protocol = protocol,
+            Address = reading.Address,
+            Protocol = reading.Protocol,
+            Source = reading.PeerName,
             ThresholdPercent = thresholdPercent,
             IntervalSeconds = intervalSeconds,
         };
+
+    /// <summary>Rebuilds a reading from a snapshot received over the network.</summary>
+    public BmsReading? ToReading() =>
+        SocPercent is not { } soc
+            ? null
+            : new BmsReading(
+                new BmsStatus(soc, VoltageV, CurrentA, RemainingAh, NominalAh, Cycles, TemperaturesC),
+                Enum.TryParse<BatteryState>(State, out var state) ? state : BatteryState.Unknown,
+                TimeLeftSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null,
+                DateTimeOffset.FromUnixTimeSeconds(UpdatedUnix).LocalDateTime)
+            {
+                Address = this.Address,
+                Protocol = this.Protocol,
+                PeerName = Source,
+            };
 
     /// <summary>Keeps the last reading visible but marks it stale, so the widget can grey out rather than blank.</summary>
     public BmsStatusSnapshot AsOffline(string problem) =>
@@ -72,6 +94,21 @@ public sealed class StatusFile(string filePath)
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
+
+    public static string Serialize(BmsStatusSnapshot snapshot) => JsonSerializer.Serialize(snapshot, Options);
+
+    /// <summary>Parses a snapshot received from a peer; returns null for anything malformed.</summary>
+    public static BmsStatusSnapshot? Deserialize(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<BmsStatusSnapshot>(json, Options);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>$XDG_RUNTIME_DIR/bms-monitor/status.json, falling back to the temp directory.</summary>
     public static string DefaultPath
@@ -93,7 +130,7 @@ public sealed class StatusFile(string filePath)
 
             // Write-then-rename: readers poll this file and must never catch a partial write.
             var temporary = filePath + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(snapshot, Options));
+            File.WriteAllText(temporary, Serialize(snapshot));
             File.Move(temporary, filePath, overwrite: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
