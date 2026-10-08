@@ -6,7 +6,9 @@
     from Linux with: dotnet build -p:EnableWindowsTargeting=true
   -->
   <PropertyGroup>
-    <TargetFrameworks>net10.0</TargetFrameworks>
+    <!-- Singular when there is only one: a one-value TargetFrameworks still makes this a
+         cross-targeting project, and `dotnet publish` then refuses to pick a framework. -->
+    <TargetFramework Condition="'$(OS)' != 'Windows_NT' and '$(EnableWindowsTargeting)' != 'true'">net10.0</TargetFramework>
     <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' or '$(EnableWindowsTargeting)' == 'true'">net10.0;net10.0-windows10.0.19041.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

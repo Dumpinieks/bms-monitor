@@ -3,7 +3,7 @@
   <!-- See BmsMonitor.Core.csproj for why the Windows target is opt-in off Windows. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>net10.0</TargetFrameworks>
+    <TargetFramework Condition="'$(OS)' != 'Windows_NT' and '$(EnableWindowsTargeting)' != 'true'">net10.0</TargetFramework>
     <TargetFrameworks Condition="'$(OS)' == 'Windows_NT' or '$(EnableWindowsTargeting)' == 'true'">net10.0;net10.0-windows10.0.19041.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
