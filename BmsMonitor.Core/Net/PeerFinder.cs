@@ -24,6 +24,13 @@ public sealed class PeerFinder(Action<string> log, int discoveryPort = PeerProto
 
     readonly HttpClient _http = new() { Timeout = FetchTimeout };
 
+    /// <summary>
+    /// Instance to ignore when discovering. An instance that both shares and consumes answers
+    /// its own probe - set this to its <see cref="StatusServer.InstanceId"/> so it does not
+    /// serve itself its own last reading and call it a peer's.
+    /// </summary>
+    public string? ExcludeInstanceId { get; set; }
+
     /// <summary>Broadcasts a probe and collects every instance that answers.</summary>
     public async Task<IReadOnlyList<BmsPeer>> DiscoverAsync(TimeSpan? timeout, CancellationToken ct)
     {
@@ -62,6 +69,8 @@ public sealed class PeerFinder(Action<string> log, int discoveryPort = PeerProto
                 var reply = await udp.ReceiveAsync(deadline.Token);
                 var text = Encoding.UTF8.GetString(reply.Buffer);
                 if (!PeerProtocol.TryParseOffer(text, out var port, out var id, out var name))
+                    continue;
+                if (id == ExcludeInstanceId)
                     continue;
                 // Keyed by instance, so a host answering on loopback, LAN and VPN counts once.
                 // The first reply wins: it came back on the fastest path.

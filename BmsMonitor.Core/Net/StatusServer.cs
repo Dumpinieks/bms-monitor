@@ -18,8 +18,13 @@ public sealed class StatusServer : IAsyncDisposable
     readonly int _statusPort;
     readonly int _discoveryPort;
     readonly string _name;
-    // Identifies this instance across the several addresses it answers on.
-    readonly string _instanceId = Guid.NewGuid().ToString("N")[..8];
+
+    /// <summary>
+    /// Identifies this instance across the several addresses it answers on. An instance that
+    /// both shares and consumes passes this to <see cref="PeerFinder.ExcludeInstanceId"/>, so
+    /// it does not discover itself and mistake its own last reading for a peer's.
+    /// </summary>
+    public string InstanceId { get; } = Guid.NewGuid().ToString("N")[..8];
 
     CancellationTokenSource? _cts;
     Task _discovery = Task.CompletedTask;
@@ -84,7 +89,7 @@ public sealed class StatusServer : IAsyncDisposable
                 // Only offer data we read ourselves, so a peer never relays second-hand readings.
                 if (_snapshot() is not { Source: null })
                     continue;
-                var offer = Encoding.UTF8.GetBytes(PeerProtocol.Offer(_statusPort, _instanceId, _name));
+                var offer = Encoding.UTF8.GetBytes(PeerProtocol.Offer(_statusPort, InstanceId, _name));
                 await udp.SendAsync(offer, offer.Length, request.RemoteEndPoint);
             }
             catch (OperationCanceledException)

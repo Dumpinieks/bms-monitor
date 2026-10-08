@@ -162,13 +162,14 @@ static async Task Monitor(Options o, CancellationToken ct)
     Console.WriteLine($"Monitoring every {o.Interval.TotalSeconds:0} s, " +
                       $"alert at <= {o.Threshold}% (re-arms at >= {o.Threshold + o.Hysteresis}%). Ctrl+C to stop.");
 
+    var peers = o.UsePeers ? new PeerFinder(Log) : null;
     var poller = new BmsPoller(new PollerOptions(o.ToConnectOptions())
     {
         Threshold = o.Threshold,
         Hysteresis = o.Hysteresis,
         Interval = o.Interval,
         OfflineAlert = o.OfflineAlert,
-        Peers = o.UsePeers ? new PeerFinder(Log) : null,
+        Peers = peers,
     }, Log);
 
     // Optional feed for a desktop widget; the widget cannot connect itself, as the BMS
@@ -196,14 +197,20 @@ static async Task Monitor(Options o, CancellationToken ct)
     };
     poller.Failed += problem => status?.Write(last.AsOffline(problem));
 
-    // Serving starts regardless of whether we have a reading yet; the server simply
-    // does not answer until it has a locally-read one to share.
+    // Serving starts regardless of whether we have a reading yet; the server simply does not
+    // answer until there is a locally-read one to share. `last` only ever holds a successful
+    // reading, and it carries its own timestamp, so a peer judges freshness for itself.
     await using var server = o.SharePort is { } sharePort
-        ? new StatusServer(() => last.Online ? last : null, Log, statusPort: sharePort)
+        ? new StatusServer(() => last.SocPercent is null ? null : last, Log, statusPort: sharePort)
         : null;
     server?.Start();
-    if (o.UsePeers)
+
+    if (peers is not null)
+    {
+        // Sharing and consuming at once means answering our own probe; skip ourselves.
+        peers.ExcludeInstanceId = server?.InstanceId;
         Console.WriteLine("Will fall back to LAN peers when the BMS cannot be read here.");
+    }
 
     try
     {
