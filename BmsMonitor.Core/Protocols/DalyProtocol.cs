@@ -72,7 +72,7 @@ public sealed class DalyProtocol : IBmsProtocol
 
     static async Task<byte[]?> RequestAsync(GattChannel channel, byte address, byte cmd, CancellationToken ct)
     {
-        await channel.SendAsync(BuildRequest(address, cmd));
+        await channel.SendAsync(BuildRequest(address, cmd), ct);
         var frame = await channel.ReceiveFrameAsync(b => ExtractFrame(b, cmd), ResponseTimeout, ct);
         return frame?[4..12];
     }

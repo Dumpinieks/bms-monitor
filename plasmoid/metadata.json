@@ -1,0 +1,18 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "org.bmsmonitor.widget",
+        "Name": "Bluetooth BMS",
+        "Description": "Battery charge, power and estimated time left from a Bluetooth BMS",
+        "Icon": "battery",
+        "Category": "System Information",
+        "License": "MIT",
+        "EnabledByDefault": true,
+        "Authors": [
+            {
+                "Name": "Mykhailo Tarasenko"
+            }
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

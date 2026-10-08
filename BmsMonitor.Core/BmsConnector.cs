@@ -54,7 +54,7 @@ public static class BmsConnector
 
     static async Task<(BmsSession Session, BmsStatus Status, ulong Address)> OpenAsync(ConnectOptions o, ulong address, CancellationToken ct)
     {
-        var session = await BmsSession.OpenAsync(address, o.Protocol, o.Verbose);
+        var session = await BmsSession.OpenAsync(address, o.Protocol, o.Verbose, ct);
         try
         {
             return (session, await session.ReadStatusAsync(ct), address);

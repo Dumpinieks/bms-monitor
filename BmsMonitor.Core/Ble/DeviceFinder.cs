@@ -1,6 +1,4 @@
 using BmsMonitor.Protocols;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Enumeration;
 
 namespace BmsMonitor.Ble;
 
@@ -18,9 +16,10 @@ public static class DeviceFinder
     const int MaxServiceOnlyCandidates = 3;
 
     /// <summary>
-    /// Returns likely BMS devices, best first: name matches from the scan, paired devices with a matching name
-    /// (a connected BMS stops advertising), then devices that only advertise a BMS service UUID. The service UUIDs
-    /// are generic (FF00/FFF0 are used by unrelated gadgets too), so callers should verify each candidate.
+    /// Returns likely BMS devices, best first: name matches from the scan, devices the stack already knows
+    /// with a matching name (a connected BMS stops advertising), then devices that only advertise a BMS
+    /// service UUID. The service UUIDs are generic (FF00/FFF0 are used by unrelated gadgets too), so
+    /// callers should verify each candidate.
     /// </summary>
     /// <param name="nameFilter">If set, match devices whose name contains this text instead of the built-in heuristics.</param>
     public static async Task<IReadOnlyList<FoundDevice>> FindCandidatesAsync(string? nameFilter, TimeSpan scanTime, CancellationToken ct)
@@ -35,12 +34,10 @@ public static class DeviceFinder
             .Select(d => new FoundDevice(d.Address, d.Name, "scan"))
             .ToList();
 
-        var paired = await DeviceInformation.FindAllAsync(BluetoothLEDevice.GetDeviceSelectorFromPairingState(true));
-        foreach (var info in paired.Where(i => NameMatches(i.Name)))
+        foreach (var known in await BleBackend.Current.GetKnownDevicesAsync(ct))
         {
-            using var device = await BluetoothLEDevice.FromIdAsync(info.Id);
-            if (device is not null && candidates.All(c => c.Address != device.BluetoothAddress))
-                candidates.Add(new FoundDevice(device.BluetoothAddress, info.Name, "paired devices"));
+            if (NameMatches(known.Name) && candidates.All(c => c.Address != known.Address))
+                candidates.Add(new FoundDevice(known.Address, known.Name, "known devices"));
         }
 
         if (nameFilter is null)

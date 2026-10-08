@@ -1,13 +1,17 @@
 # BmsMonitor
 
-Reads a Bluetooth LE "Smart BMS" from Windows and shows a Windows notification when the
-battery's state of charge drops to a threshold (default 25%).
+Reads a Bluetooth LE "Smart BMS" and shows a desktop notification when the battery's state of
+charge drops to a threshold (default 25%). Runs on Windows (WinRT Bluetooth) and Linux (BlueZ).
 
-| Project            | What it is                                                              |
-|--------------------|-------------------------------------------------------------------------|
-| `BmsWidget`        | Tray icon + taskbar panel: SOC %, power (W), estimated time left; low-battery alerts |
-| `BmsMonitor`       | Console tool: `scan`, `probe`, `status`, `monitor`                      |
-| `BmsMonitor.Core`  | BLE discovery, BMS protocols, polling, runtime estimate                 |
+| Project            | Platform      | What it is                                                              |
+|--------------------|---------------|-------------------------------------------------------------------------|
+| `BmsWidget`        | Windows       | Tray icon + taskbar panel: SOC %, power (W), estimated time left; low-battery alerts |
+| `plasmoid`         | Linux / KDE   | Plasma 6 panel widget showing the same, as a native plasmoid            |
+| `BmsMonitor`       | Windows/Linux | Console tool: `scan`, `probe`, `status`, `monitor`                      |
+| `BmsMonitor.Core`  | Windows/Linux | BLE discovery, BMS protocols, polling, runtime estimate                 |
+
+`BmsWidget` is WinForms plus Win32 taskbar interop and stays Windows-only. On Linux the equivalent is
+the [Plasma widget](#plasma-widget-kde); see [Linux](#linux) for build and run commands.
 
 ## Deploy
 
@@ -49,6 +53,8 @@ The BMS accepts one connection at a time: the widget, the console `monitor`, and
 
 ## Console tool
 
+Works on both platforms; the examples below use PowerShell, see [Linux](#linux) for bash.
+
 Supported protocols (auto-detected from GATT services):
 
 | Vendor / app                                    | Service | Notify | Write | Typical name      |
@@ -84,6 +90,70 @@ To run it in the background at logon, publish it and create a scheduled task:
 dotnet publish BmsMonitor -c Release -o C:\Tools\BmsMonitor
 schtasks /Create /TN BmsMonitor /SC ONLOGON /RL LIMITED /TR "C:\Tools\BmsMonitor\BmsMonitor.exe monitor"
 ```
+
+## Linux
+
+Needs BlueZ with `bluetoothd` running (`systemctl status bluetooth`) and a powered adapter; the app
+talks to it over the D-Bus system bus. No root required, and the BMS does not need to be paired.
+
+```bash
+dotnet build BmsMonitor.Linux.slnx            # BmsWidget is Windows-only, hence a separate solution
+dotnet run --project BmsMonitor -- scan
+dotnet run --project BmsMonitor -- status
+dotnet run --project BmsMonitor -- monitor -t 25 -i 60
+```
+
+Notifications go to the `org.freedesktop.Notifications` D-Bus service, so a desktop session has to be
+running; they are sent with critical urgency so they stay up until dismissed, like the Windows toast.
+
+Unlike Windows, BlueZ has no "connect by address": it only exposes a device it currently knows about
+and discards unpaired ones again seconds after a scan ends. The Linux backend therefore keeps
+discovery running across the connect, which is why connecting can take a few seconds longer than on
+Windows, and why a BMS that advertises only intermittently may need a retry.
+
+The Windows projects can be compiled (not run) from Linux with the Windows reference packs:
+
+```bash
+dotnet build BmsMonitor.slnx -p:EnableWindowsTargeting=true
+```
+
+## Plasma widget (KDE)
+
+A native Plasma 6 plasmoid showing `59% 66 W` / `11h 30m left` in the panel, coloured by the
+current colour scheme (green / amber / red, grey when offline). Click it for a popup with voltage,
+current, remaining capacity, temperatures, cycles and the BMS address.
+
+```bash
+./deploy.sh -a D0:18:07:01:2C:A6     # publish, install the widget, run the poller as a user service
+./deploy.sh --uninstall              # remove all three again
+```
+
+Then right-click the panel → **Add Widgets** → **Bluetooth BMS**.
+
+The widget never speaks Bluetooth: the BMS accepts a single BLE connection, so one long-lived poller
+owns it and publishes a JSON snapshot that the widget reads.
+
+```
+BmsMonitor monitor --status-file   ->   $XDG_RUNTIME_DIR/bms-monitor/status.json   ->   plasmoid
+```
+
+That means **the widget shows "no readings" until the backend runs**, and that the console
+`status`/`probe` commands cannot be used while it does — stop the service first:
+
+```bash
+systemctl --user stop bms-monitor      # free the BMS for the console tool
+journalctl --user -u bms-monitor -f    # what the poller is doing
+```
+
+To run the two halves by hand instead of via systemd:
+
+```bash
+dotnet run --project BmsMonitor -- monitor --status-file   # backend
+kpackagetool6 --type Plasma/Applet --install plasmoid      # widget, once
+```
+
+The status file path and refresh interval are configurable in the widget's settings, so the backend
+can publish somewhere else (or on another machine via a shared path).
 
 ## If your BMS isn't recognized
 

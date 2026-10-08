@@ -1,0 +1,5 @@
+<!-- Linux-buildable subset: BmsWidget is WinForms + Win32 and stays Windows-only. -->
+<Solution>
+  <Project Path="BmsMonitor.Core/BmsMonitor.Core.csproj" />
+  <Project Path="BmsMonitor/BmsMonitor.csproj" />
+</Solution>

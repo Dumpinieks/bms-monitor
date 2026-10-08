@@ -31,6 +31,9 @@ public sealed class BmsPoller(PollerOptions options, Action<string> log)
     /// <summary>Raised with the BMS address after each (re)connection.</summary>
     public event Action<ulong>? Connected;
 
+    /// <summary>Protocol of the live session ("Daly", "JBD"), or null while disconnected.</summary>
+    public string? ProtocolName { get; private set; }
+
     public async Task RunAsync(CancellationToken ct)
     {
         var o = options;
@@ -57,6 +60,7 @@ public sealed class BmsPoller(PollerOptions options, Action<string> log)
                     {
                         (session, status, var connected) = await BmsConnector.ConnectAsync(o.Connect, address, log, ct);
                         address = connected;
+                        ProtocolName = session.Protocol.Name;
                         log($"Connected to {BleAddress.Format(connected)} ({session.Protocol.Name} protocol).");
                         Connected?.Invoke(connected);
                     }
@@ -95,6 +99,7 @@ public sealed class BmsPoller(PollerOptions options, Action<string> log)
                     Failed?.Invoke(ex.Message);
                     session?.Dispose();
                     session = null;
+                    ProtocolName = null;
 
                     if (o.OfflineAlert > TimeSpan.Zero && !offlineNotified && DateTime.Now - lastSuccess > o.OfflineAlert)
                     {

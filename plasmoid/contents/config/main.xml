@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <entry name="statusFile" type="String">
+      <label>Path of the JSON status file written by "BmsMonitor monitor --status-file"</label>
+      <default></default>
+    </entry>
+    <entry name="refreshSeconds" type="Int">
+      <label>How often to re-read the status file</label>
+      <default>5</default>
+    </entry>
+    <entry name="showPower" type="Bool">
+      <label>Show power draw next to the charge</label>
+      <default>true</default>
+    </entry>
+    <entry name="showTimeLeft" type="Bool">
+      <label>Show the estimated time left</label>
+      <default>true</default>
+    </entry>
+  </group>
+</kcfg>

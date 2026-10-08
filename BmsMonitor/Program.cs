@@ -1,10 +1,7 @@
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using BmsMonitor;
 using BmsMonitor.Ble;
 using BmsMonitor.Protocols;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Bluetooth.GenericAttributeProfile;
 
 Console.OutputEncoding = Encoding.UTF8;
 
@@ -68,36 +65,34 @@ static async Task Scan(Options o, CancellationToken ct)
 static async Task Probe(Options o, CancellationToken ct)
 {
     var address = await ResolveAddress(o, ct);
-    Console.WriteLine($"Connecting to {BleAddress.Format(address)}...");
-    using var link = await BleLink.ConnectAsync(address);
-    Console.WriteLine($"Connected: {link.Device.Name}");
+    Console.WriteLine($"Connecting to {BleAddress.Format(address)} via {BleBackend.Current.Name}...");
+    using var device = await BleBackend.Current.ConnectAsync(address, ct);
+    Console.WriteLine($"Connected: {(device.Name.Length > 0 ? device.Name : "(no name)")}");
 
-    var notifiable = new List<GattCharacteristic>();
-    foreach (var service in link.Services)
+    var notifiable = new List<IGattCharacteristic>();
+    foreach (var service in device.Services)
     {
         Console.WriteLine($"Service {service.Uuid}");
-        var chars = await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
-        if (chars.Status != GattCommunicationStatus.Success)
+        IReadOnlyList<IGattCharacteristic> characteristics;
+        try
         {
-            Console.WriteLine($"  (characteristics unavailable: {chars.Status})");
+            characteristics = await service.GetCharacteristicsAsync(ct);
+        }
+        catch (IOException ex)
+        {
+            Console.WriteLine($"  (characteristics unavailable: {ex.Message})");
             continue;
         }
-        foreach (var c in chars.Characteristics)
+        foreach (var c in characteristics)
         {
-            var line = $"  Char {c.Uuid} [{c.CharacteristicProperties}]";
-            if (c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Read))
+            var line = $"  Char {c.Uuid} [{c.Properties}]";
+            if (await c.TryReadAsync(ct) is { } bytes)
             {
-                var read = await c.ReadValueAsync(BluetoothCacheMode.Uncached);
-                if (read.Status == GattCommunicationStatus.Success)
-                {
-                    var bytes = read.Value.ToArray();
-                    var ascii = new string(bytes.Select(b => b is >= 32 and < 127 ? (char)b : '.').ToArray());
-                    line += $" = {BleAddress.Hex(bytes)}  \"{ascii}\"";
-                }
+                var ascii = new string(bytes.Select(b => b is >= 32 and < 127 ? (char)b : '.').ToArray());
+                line += $" = {BleAddress.Hex(bytes)}  \"{ascii}\"";
             }
             Console.WriteLine(line);
-            if (c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Notify) ||
-                c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Indicate))
+            if (c.Properties.HasFlag(GattProperties.Notify) || c.Properties.HasFlag(GattProperties.Indicate))
                 notifiable.Add(c);
         }
     }
@@ -105,14 +100,14 @@ static async Task Probe(Options o, CancellationToken ct)
     var matched = false;
     foreach (var protocol in BmsProtocols.CreateAll())
     {
-        if (link.FindService(protocol.ServiceUuid) is not { } service)
+        if (device.FindService(protocol.ServiceUuid) is not { } service)
             continue;
         matched = true;
         Console.WriteLine();
         Console.WriteLine($"Trying {protocol.Name} protocol:");
         try
         {
-            using var channel = await GattChannel.OpenAsync(service, protocol.NotifyUuid, protocol.WriteUuid, verbose: true);
+            using var channel = await GattChannel.OpenAsync(service, protocol.NotifyUuid, protocol.WriteUuid, verbose: true, ct);
             Console.WriteLine($"  => {await protocol.ReadStatusAsync(channel, ct)}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -125,19 +120,28 @@ static async Task Probe(Options o, CancellationToken ct)
     {
         Console.WriteLine();
         Console.WriteLine("No known BMS service found. Listening to all notifications for 15 s (some BMSes push data unsolicited)...");
-        void Handler(GattCharacteristic sender, GattValueChangedEventArgs e) =>
-            Console.WriteLine($"  {sender.Uuid}: {BleAddress.Hex(e.CharacteristicValue.ToArray())}");
+        var listeners = new List<(IGattCharacteristic Characteristic, Action<byte[]> Handler)>();
         foreach (var c in notifiable)
         {
-            c.ValueChanged += Handler;
-            await c.WriteClientCharacteristicConfigurationDescriptorAsync(
-                c.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Notify)
-                    ? GattClientCharacteristicConfigurationDescriptorValue.Notify
-                    : GattClientCharacteristicConfigurationDescriptorValue.Indicate);
+            var self = c;
+            Action<byte[]> handler = data => Console.WriteLine($"  {self.Uuid}: {BleAddress.Hex(data)}");
+            self.ValueChanged += handler;
+            listeners.Add((self, handler));
+            try
+            {
+                await self.SubscribeAsync(ct);
+            }
+            catch (IOException ex)
+            {
+                Console.WriteLine($"  {self.Uuid}: could not subscribe: {ex.Message}");
+            }
         }
         await Task.Delay(TimeSpan.FromSeconds(15), ct);
-        foreach (var c in notifiable)
-            c.ValueChanged -= Handler;
+        foreach (var (characteristic, handler) in listeners)
+        {
+            characteristic.ValueChanged -= handler;
+            characteristic.Unsubscribe();
+        }
     }
 }
 
@@ -163,14 +167,44 @@ static async Task Monitor(Options o, CancellationToken ct)
         Interval = o.Interval,
         OfflineAlert = o.OfflineAlert,
     }, Log);
+
+    // Optional feed for a desktop widget; the widget cannot connect itself, as the BMS
+    // accepts only one BLE connection at a time.
+    var status = o.StatusFile is null ? null : new StatusFile(o.StatusFile);
+    var interval = (int)o.Interval.TotalSeconds;
+    var address = o.Address;
+    var last = new BmsStatusSnapshot { ThresholdPercent = o.Threshold, IntervalSeconds = interval };
+    if (status is not null)
+    {
+        Console.WriteLine($"Publishing status to {o.StatusFile}");
+        status.Write(last.AsOffline("searching"));
+    }
+
+    poller.Connected += connected => address = connected;
     poller.ReadingReceived += r =>
     {
         var extra = new List<string>();
         if (r.PowerW is { } w) extra.Add(Format.Power(w));
         if (r.TimeLeft is { } t) extra.Add(r.State == BatteryState.Charging ? $"full in {Format.Duration(t)}" : $"{Format.Duration(t)} left");
         Log(r.Status + (extra.Count > 0 ? " | " + string.Join(", ", extra) : ""));
+
+        if (status is null)
+            return;
+        last = BmsStatusSnapshot.From(r, address is { } a ? BleAddress.Format(a) : null,
+            poller.ProtocolName, o.Threshold, interval);
+        status.Write(last);
     };
-    await poller.RunAsync(ct);
+    poller.Failed += problem => status?.Write(last.AsOffline(problem));
+
+    try
+    {
+        await poller.RunAsync(ct);
+    }
+    finally
+    {
+        // Leave the widget showing "offline" rather than a frozen last reading.
+        status?.Write(last.AsOffline("monitor stopped"));
+    }
 }
 
 /// <summary>For diagnostics: the configured address or the best search candidate, unverified.</summary>
@@ -197,6 +231,8 @@ sealed class Options
     public TimeSpan ScanTime { get; private set; } = TimeSpan.FromSeconds(10);
     public TimeSpan OfflineAlert { get; private set; } = TimeSpan.Zero;
     public bool Verbose { get; private set; }
+    /// <summary>Where to publish readings for a desktop widget; null disables publishing.</summary>
+    public string? StatusFile { get; private set; }
 
     public ConnectOptions ToConnectOptions() => new(Address, Name, Protocol, Verbose) { ScanTime = ScanTime };
 
@@ -209,6 +245,8 @@ sealed class Options
         for (var i = 1; i < args.Length; i++)
         {
             string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"Missing value for {args[i]}");
+            // For flags whose value may be left out in favour of a default.
+            string? NextOptional() => i + 1 < args.Length && !args[i + 1].StartsWith('-') ? args[++i] : null;
             int NextInt() => int.TryParse(Next(), out var n) && n >= 0 ? n : throw new ArgumentException($"Invalid number for {args[i - 1]}");
 
             switch (args[i].ToLowerInvariant())
@@ -221,6 +259,7 @@ sealed class Options
                 case "--interval" or "-i": o.Interval = TimeSpan.FromSeconds(Math.Max(5, NextInt())); break;
                 case "--scan-time": o.ScanTime = TimeSpan.FromSeconds(NextInt()); break;
                 case "--offline-alert": o.OfflineAlert = TimeSpan.FromMinutes(NextInt()); break;
+                case "--status-file": o.StatusFile = NextOptional() ?? BmsMonitor.StatusFile.DefaultPath; break;
                 case "--verbose" or "-v": o.Verbose = true; break;
                 default: throw new ArgumentException($"Unknown option {args[i]}");
             }
@@ -235,7 +274,7 @@ sealed class Options
           scan                     List nearby BLE devices (find your BMS address here)
           probe                    Connect, dump GATT services and try known protocols (diagnostics)
           status                   Read the BMS once and print it
-          monitor                  Poll the BMS and show a Windows notification when SOC drops to the threshold
+          monitor                  Poll the BMS and show a desktop notification when SOC drops to the threshold
           test-notify              Show a test notification
 
         Options:
@@ -248,6 +287,8 @@ sealed class Options
           -i, --interval <sec>     Poll interval in seconds (default 60)
               --offline-alert <min> Notify if the BMS has been unreachable for this many minutes (default off)
               --scan-time <sec>    BLE scan duration (default 10)
+              --status-file [path] Publish each reading as JSON for a desktop widget to read
+                                   (default: $XDG_RUNTIME_DIR/bms-monitor/status.json)
           -v, --verbose            Print raw BLE traffic
 
         Example:

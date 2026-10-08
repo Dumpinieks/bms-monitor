@@ -6,32 +6,32 @@ namespace BmsMonitor;
 /// <summary>A connected BMS with its protocol detected.</summary>
 public sealed class BmsSession : IDisposable
 {
-    readonly BleLink _link;
+    readonly IBleDevice _device;
     readonly GattChannel _channel;
     public IBmsProtocol Protocol { get; }
 
-    BmsSession(BleLink link, GattChannel channel, IBmsProtocol protocol)
+    BmsSession(IBleDevice device, GattChannel channel, IBmsProtocol protocol)
     {
-        _link = link;
+        _device = device;
         _channel = channel;
         Protocol = protocol;
     }
 
-    public bool IsConnected => _link.IsConnected;
+    public bool IsConnected => _device.IsConnected;
 
-    public static async Task<BmsSession> OpenAsync(ulong address, string? forcedProtocol, bool verbose)
+    public static async Task<BmsSession> OpenAsync(ulong address, string? forcedProtocol, bool verbose, CancellationToken ct)
     {
-        var link = await BleLink.ConnectAsync(address);
+        var device = await BleBackend.Current.ConnectAsync(address, ct);
         try
         {
             var candidates = BmsProtocols.CreateAll()
                 .Where(p => forcedProtocol is null || p.Name.Equals(forcedProtocol, StringComparison.OrdinalIgnoreCase));
             foreach (var protocol in candidates)
             {
-                if (link.FindService(protocol.ServiceUuid) is not { } service)
+                if (device.FindService(protocol.ServiceUuid) is not { } service)
                     continue;
-                var channel = await GattChannel.OpenAsync(service, protocol.NotifyUuid, protocol.WriteUuid, verbose);
-                return new BmsSession(link, channel, protocol);
+                var channel = await GattChannel.OpenAsync(service, protocol.NotifyUuid, protocol.WriteUuid, verbose, ct);
+                return new BmsSession(device, channel, protocol);
             }
             throw new NotSupportedException(
                 "No supported BMS protocol found on this device (looked for JBD service FF00 and Daly service FFF0). " +
@@ -39,7 +39,7 @@ public sealed class BmsSession : IDisposable
         }
         catch
         {
-            link.Dispose();
+            device.Dispose();
             throw;
         }
     }
@@ -49,6 +49,6 @@ public sealed class BmsSession : IDisposable
     public void Dispose()
     {
         _channel.Dispose();
-        _link.Dispose();
+        _device.Dispose();
     }
 }

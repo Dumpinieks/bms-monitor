@@ -18,7 +18,7 @@ public sealed class JbdProtocol : IBmsProtocol
 
     public async Task<BmsStatus> ReadStatusAsync(GattChannel channel, CancellationToken ct)
     {
-        await channel.SendAsync(BuildRead(CmdBasicInfo));
+        await channel.SendAsync(BuildRead(CmdBasicInfo), ct);
         var frame = await channel.ReceiveFrameAsync(ExtractFrame, TimeSpan.FromSeconds(5), ct)
             ?? throw new TimeoutException("JBD BMS did not answer the basic info request.");
         if (frame[2] != 0x00)
