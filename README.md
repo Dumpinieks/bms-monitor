@@ -17,13 +17,26 @@ the [Plasma widget](#plasma-widget-kde); see [Linux](#linux) for build and run c
 
 ```powershell
 .\deploy.ps1              # build Release, install to %LOCALAPPDATA%\Programs\BmsWidget, register logon task, (re)start
-.\deploy.ps1 -Uninstall   # stop, remove the task and installed files (settings/log are kept)
+.\deploy.ps1 -Share       # ... and share readings on the LAN (adds firewall rules, one UAC prompt)
+.\deploy.ps1 -Peers       # ... and borrow readings from a sharing machine when the BMS is busy
+.\deploy.ps1 -Share:$false  # stop sharing, remove the firewall rules
+.\deploy.ps1 -Uninstall   # stop, remove the task, firewall rules and installed files (settings/log are kept)
 ```
 
 Re-run `deploy.ps1` after changing the code: it stops the running widget cleanly (so the Bluetooth
 connection is released), republishes, and starts it again. The scheduled task (`BmsWidget`) runs at
 logon as the current user, without admin rights, keeps running on battery power, and is restarted up to
 3 times if it crashes.
+
+`-Share` / `-Peers` write `Share` / `UsePeers` into the widget's `settings.json`; leaving a switch out
+keeps whatever is set there. Sharing needs inbound TCP 17645 (`-SharePort`) and UDP 17646, so the script
+adds Windows Firewall rules (group `BmsWidget`) limited to the installed `BmsWidget.exe`, to
+`-ShareRemoteAddress` (default `LocalSubnet`) and to Private/Domain networks (`-ShareProfile`) — the
+endpoint is unauthenticated, so it stays closed on Public networks such as café Wi-Fi. Only changing the
+rules needs elevation; borrowing (`-Peers`) needs no inbound rule.
+
+On Linux, `./deploy.sh --share [port]` and `./deploy.sh --peers` pass the same options to the service;
+open the ports in your firewall yourself (see [Sharing readings](#sharing-readings-over-the-local-network)).
 
 ## Taskbar widget
 

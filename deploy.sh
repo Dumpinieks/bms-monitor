@@ -7,6 +7,9 @@
 #   -a, --address <mac>   Pin the BMS, e.g. AA:BB:CC:DD:EE:FF (default: search each cycle)
 #   -i, --interval <sec>  Poll interval (default: 30)
 #   -t, --threshold <pct> Low battery alert threshold (default: 25)
+#       --share [port]    Share readings with other machines on the LAN (TCP port, default: 17645;
+#                         discovery is UDP 17646). Both ports must be open in the firewall.
+#       --peers           Borrow readings from a sharing machine when the BMS can't be read here
 #       --install-dir DIR Where to publish (default: ~/.local/share/bms-monitor)
 #       --no-service      Install the binary and widget only, do not touch systemd
 #       --uninstall       Stop and remove the service, the widget and the installed files
@@ -23,6 +26,9 @@ PLASMOID_ID="org.dumpinieks.bmsmonitor.widget"
 ADDRESS=""
 INTERVAL=30
 THRESHOLD=25
+SHARE=0
+SHARE_PORT=""
+PEERS=0
 WITH_SERVICE=1
 UNINSTALL=0
 
@@ -39,6 +45,11 @@ while [[ $# -gt 0 ]]; do
     -a|--address)   ADDRESS="${2:?--address needs a value}"; shift 2 ;;
     -i|--interval)  INTERVAL="${2:?--interval needs a value}"; shift 2 ;;
     -t|--threshold) THRESHOLD="${2:?--threshold needs a value}"; shift 2 ;;
+    --share)
+      SHARE=1
+      # The port is optional, as with BmsMonitor's own --share.
+      if [[ ${2:-} =~ ^[0-9]+$ ]]; then SHARE_PORT="$2"; shift 2; else shift; fi ;;
+    --peers)        PEERS=1; shift ;;
     --install-dir)  INSTALL_DIR="${2:?--install-dir needs a value}"; shift 2 ;;
     --no-service)   WITH_SERVICE=0; shift ;;
     --uninstall)    UNINSTALL=1; shift ;;
@@ -83,6 +94,8 @@ fi
 # The BMS accepts a single connection, so exactly one long-lived poller may run.
 ARGS="monitor --status-file --interval $INTERVAL --threshold $THRESHOLD"
 [[ -n "$ADDRESS" ]] && ARGS="$ARGS --address $ADDRESS"
+[[ $SHARE -eq 1 ]] && ARGS="$ARGS --share${SHARE_PORT:+ $SHARE_PORT}"
+[[ $PEERS -eq 1 ]] && ARGS="$ARGS --peers"
 
 info "Writing $UNIT_DIR/$SERVICE..."
 mkdir -p "$UNIT_DIR"
@@ -113,6 +126,10 @@ sleep 3
 if systemctl --user is-active --quiet "$SERVICE"; then
   echo "Done. Add the widget with: right-click the panel -> Add Widgets -> \"Bluetooth BMS\"."
   echo "Logs: journalctl --user -u $SERVICE -f"
+  if [[ $SHARE -eq 1 ]]; then
+    # Opening ports needs root and is distro-specific (see README.md for NixOS), so only remind.
+    echo "Sharing on TCP ${SHARE_PORT:-17645} and UDP 17646: make sure your firewall allows both from your LAN."
+  fi
 else
   echo "The service is not running. Check: journalctl --user -u $SERVICE -n 50" >&2
   exit 1
