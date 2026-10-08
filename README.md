@@ -77,7 +77,7 @@ Without `--address`, the BMS is found automatically: devices advertising a BMS-s
 stops advertising), then devices that only advertise the FF00/FFF0 service. Each candidate is connected
 and must answer a status request before it is accepted, since those service UUIDs are also used by
 unrelated gadgets. In `monitor` mode the search repeats on every cycle until the BMS is found.
-Use `--address D0:18:07:01:2C:A6` or `--name <text>` to pin a specific device.
+Use `--address AA:BB:CC:DD:EE:FF` or `--name <text>` to pin a specific device.
 
 Close the phone app first: most BMS boards accept only one BLE connection at a time.
 
@@ -124,7 +124,7 @@ current colour scheme (green / amber / red, grey when offline). Click it for a p
 current, remaining capacity, temperatures, cycles and the BMS address.
 
 ```bash
-./deploy.sh -a D0:18:07:01:2C:A6     # publish, install the widget, run the poller as a user service
+./deploy.sh -a AA:BB:CC:DD:EE:FF     # publish, install the widget, run the poller as a user service
 ./deploy.sh --uninstall              # remove all three again
 ```
 

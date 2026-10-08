@@ -4,7 +4,7 @@
 # and runs the poller as a systemd user service that keeps the widget's status file fresh.
 #
 # Usage: ./deploy.sh [options]
-#   -a, --address <mac>   Pin the BMS, e.g. D0:18:07:01:2C:A6 (default: search each cycle)
+#   -a, --address <mac>   Pin the BMS, e.g. AA:BB:CC:DD:EE:FF (default: search each cycle)
 #   -i, --interval <sec>  Poll interval (default: 30)
 #   -t, --threshold <pct> Low battery alert threshold (default: 25)
 #       --install-dir DIR Where to publish (default: ~/.local/share/bms-monitor)
