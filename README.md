@@ -185,8 +185,19 @@ networking.firewall.allowedUDPPorts = [ 17646 ];
 networking.firewall.allowedTCPPorts = [ 17645 ];
 ```
 
-The server is unauthenticated and answers anyone who asks, so only enable `--share` on a network you
-trust — it exposes the battery's charge, voltage, current and the BMS's Bluetooth address.
+The server is unauthenticated and answers anyone who asks, exposing the battery's charge, voltage,
+current and the BMS's Bluetooth address. On a laptop that joins networks you do not control, prefer
+restricting the ports to your own subnet over opening them outright:
+
+```nix
+networking.firewall.extraCommands = ''
+  iptables -A nixos-fw -s 192.168.0.0/24 -p udp --dport 17646 -j nixos-fw-accept
+  iptables -A nixos-fw -s 192.168.0.0/24 -p tcp --dport 17645 -j nixos-fw-accept
+'';
+```
+
+Discovery relies on broadcast, so it does not traverse a VPN or a routed subnet: peers have to share
+a broadcast domain.
 
 ## If your BMS isn't recognized
 
