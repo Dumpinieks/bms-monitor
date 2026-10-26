@@ -17,6 +17,19 @@ public sealed record PollerOptions(ConnectOptions Connect)
     /// accepts a single connection, so another machine may be holding it.
     /// </summary>
     public PeerFinder? Peers { get; init; }
+
+    /// <summary>
+    /// Hard ceiling on one read from an open session. The Bluetooth stacks can stop answering
+    /// without ever failing - a BlueZ D-Bus call has no timeout of its own and its proxy takes
+    /// no cancellation token - which would otherwise wedge the loop silently and forever.
+    /// </summary>
+    public TimeSpan ReadTimeout { get; init; } = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// Same ceiling for a whole connect. Generous, because on Linux a connect legitimately
+    /// includes a discovery window plus retries.
+    /// </summary>
+    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromMinutes(3);
 }
 
 public sealed record BmsReading(BmsStatus Status, BatteryState State, TimeSpan? TimeLeft, DateTime Time)
@@ -77,7 +90,7 @@ public sealed class BmsPoller(PollerOptions options, Action<string> log)
                     BmsStatus status;
                     if (session is null)
                     {
-                        (session, status, var connected) = await BmsConnector.ConnectAsync(o.Connect, address, log, ct);
+                        (session, status, var connected) = await ConnectWithTimeoutAsync(o, address, ct);
                         address = connected;
                         ProtocolName = session.Protocol.Name;
                         log($"Connected to {BleAddress.Format(connected)} ({session.Protocol.Name} protocol).");
@@ -85,7 +98,10 @@ public sealed class BmsPoller(PollerOptions options, Action<string> log)
                     }
                     else
                     {
-                        status = await session.ReadStatusAsync(ct);
+                        // WaitAsync abandons the wait rather than cancelling the call, which is
+                        // the only lever available: the stack may never answer. The session is
+                        // disposed in the catch below, and disposal is itself bounded.
+                        status = await session.ReadStatusAsync(ct).WaitAsync(o.ReadTimeout, ct);
                     }
 
                     var now = DateTime.Now;
@@ -132,6 +148,32 @@ public sealed class BmsPoller(PollerOptions options, Action<string> log)
         finally
         {
             session?.Dispose();
+        }
+
+        async Task<(BmsSession Session, BmsStatus Status, ulong Address)> ConnectWithTimeoutAsync(
+            PollerOptions settings, ulong? known, CancellationToken token)
+        {
+            var connect = BmsConnector.ConnectAsync(settings.Connect, known, log, token);
+            try
+            {
+                return await connect.WaitAsync(settings.ConnectTimeout, token);
+            }
+            catch (TimeoutException)
+            {
+                log($"Connect gave up after {settings.ConnectTimeout.TotalSeconds:0} s; retrying.");
+                // Abandoned, not stopped. Should it still succeed, nothing else would ever
+                // dispose it and the BMS's one connection would stay held for good.
+                _ = connect.ContinueWith(
+                    finished =>
+                    {
+                        if (finished.IsCompletedSuccessfully)
+                            finished.Result.Session.Dispose();
+                        else
+                            _ = finished.Exception; // observe, so it is not raised as unhandled
+                    },
+                    CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+                throw;
+            }
         }
 
         // Raises the reading and handles the low-battery alert, whatever the reading's source:

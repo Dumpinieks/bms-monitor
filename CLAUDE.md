@@ -73,6 +73,13 @@ BleScanner/DeviceFinder → IBleBackend → IBleDevice → IGattService → IGat
   names (a connected BMS stops advertising), then up to 3 devices that merely advertise FF00/FFF0 —
   UUIDs shared with unrelated gadgets. `BmsConnector.ConnectAsync` therefore connects to each
   candidate and requires a successful status read before accepting it.
+- **Every cycle is bounded by `ReadTimeout`/`ConnectTimeout`, applied with `Task.WaitAsync`.** This
+  is not belt-and-braces: a BlueZ D-Bus call has no timeout of its own and Tmds.DBus proxies take no
+  cancellation token, so a stack that stops answering wedges the loop *silently and forever* — the
+  process stays alive, systemd still reports the unit active, and `Restart=on-failure` never fires.
+  It was found after 18 days of a frozen reading. `WaitAsync` abandons the wait rather than
+  cancelling the call, which is the only lever available; an abandoned connect therefore disposes
+  its session if it later succeeds, or the BMS's single connection would stay held for good.
 - **`BmsPoller`** is the whole runtime loop: connect → read → raise `ReadingReceived` → low-battery
   notification (armed once at `SOC <= Threshold`, re-armed at `Threshold + Hysteresis`) → sleep. Any
   read failure disposes the session and reconnects on the next tick. Once it has found an address it
