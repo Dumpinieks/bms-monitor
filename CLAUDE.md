@@ -8,14 +8,16 @@ Reads a Bluetooth LE "Smart BMS" (battery management system): a taskbar/tray wid
 a console diagnostic tool (`BmsMonitor`), and the shared BLE/protocol/polling library
 (`BmsMonitor.Core`).
 
-`BmsMonitor.Core` and `BmsMonitor` multi-target `net10.0` (Linux/BlueZ) and
-`net10.0-windows10.0.19041.0` (WinRT). `BmsWidget` is WinForms + Win32 taskbar interop and stays
-Windows-only; `plasmoid/` is its KDE counterpart, a QML Plasma 6 applet.
+`BmsMonitor.Core` and `BmsMonitor` multi-target `net10.0` (Linux/BlueZ *and* macOS/CoreBluetooth,
+chosen at run time) and `net10.0-windows10.0.19041.0` (WinRT). `BmsWidget` is WinForms + Win32
+taskbar interop and stays Windows-only; `plasmoid/` is its KDE counterpart, a QML Plasma 6 applet,
+and `BmsMenuBar` its macOS one, a menu bar item.
 
 ## Build / run
 
 ```bash
 dotnet build BmsMonitor.Linux.slnx                  # Linux: Core + console only
+dotnet build BmsMonitor.macOS.slnx                  # macOS: Core + console + menu bar app
 dotnet build BmsMonitor.slnx                        # Windows: all three
 dotnet run --project BmsMonitor -- status           # one reading
 dotnet run --project BmsMonitor -- probe -v         # GATT dump + raw BLE traffic (best debugging tool)
@@ -24,6 +26,7 @@ dotnet run --project BmsMonitor -- monitor --threshold 25 --interval 60
 dotnet run --project BmsWidget                      # Windows only: tray + taskbar panel
 .\deploy.ps1                                        # Windows only: publish Release + logon task
 ./deploy.sh                                         # Linux: publish + install plasmoid + user service
+./deploy-macos.sh                                   # macOS: app bundle + LaunchAgent
 ```
 
 The Windows TFM is only in the default target set on Windows, because it needs the Windows reference
@@ -56,8 +59,9 @@ BleScanner/DeviceFinder → IBleBackend → IBleDevice → IGattService → IGat
 - **`Ble/Gatt.cs` holds the platform-neutral abstraction** (`IBleBackend`, `IBleDevice`,
   `IGattService`, `IGattCharacteristic`, `GattProperties`). Everything above it — protocols,
   `GattChannel`, `BmsSession`, the poller, the widget — is platform-agnostic and must stay that way;
-  no WinRT or D-Bus type may leak past this boundary. `BleBackend.Current` picks the implementation
-  with `#if WINDOWS`.
+  no WinRT, D-Bus or Objective-C type may leak past this boundary. `BleBackend.Current` picks the
+  implementation with `#if WINDOWS`, then `OperatingSystem.IsMacOS()` at run time, because Linux and
+  macOS share the `net10.0` build.
 - **`GattChannel`** turns a notify + write characteristic pair into a request/response pipe. BLE
   notifications land in an unbounded `Channel<byte[]>`; `ReceiveFrameAsync` feeds the accumulated bytes
   to a protocol-supplied `extract` delegate until it returns a complete frame, and returns `null` on
@@ -91,10 +95,13 @@ BleScanner/DeviceFinder → IBleBackend → IBleDevice → IGattService → IGat
 
 ## Platform backends
 
-Each backend lives in a `Windows/` or `Linux/` folder; `BmsMonitor.Core.csproj` compiles only the
-matching one per TFM (`<Compile Remove="**\Linux\**\*.cs" />` and vice versa) and references
-`Microsoft.Toolkit.Uwp.Notifications` or `Tmds.DBus` accordingly. **New platform-specific code must go
-in one of those folders**, or it will be compiled into both targets and break the other one.
+Each backend lives in a `Windows/`, `Linux/` or `macOS/` folder; `BmsMonitor.Core.csproj` compiles
+only the matching ones per TFM (the Windows TFM removes `Linux/` and `macOS/`, `net10.0` removes
+`Windows/`) and references `Microsoft.Toolkit.Uwp.Notifications` or `Tmds.DBus` accordingly. **New
+platform-specific code must go in one of those folders**, or it will be compiled into the other
+target and break it. `Linux/` and `macOS/` code is compiled together, so it must only be *reached*
+behind an `OperatingSystem.Is*()` check; macOS classes carry `[SupportedOSPlatform("macos")]`, which
+makes the CA1416 analyzer enforce that.
 
 `Ble/Windows/WinRtBleBackend.cs` — transient WinRT failures are normal and retried in place rather
 than bubbled up: `GetGattServicesAsync` often returns `Unreachable` on the first try, and
@@ -119,6 +126,56 @@ device.
   types into a dynamic assembly, which cannot implement an interface it has no access to.
 - `Dispose` explicitly calls `Disconnect()` — unlike WinRT, dropping the proxy leaves the link up, and
   the BMS only accepts one connection.
+
+`Ble/macOS/CoreBluetoothBackend.cs` — CoreBluetooth, driven through the Objective-C runtime by hand
+(`macOS/ObjC.cs`, public because the menu bar app uses it too) so it needs neither Xcode nor the
+`net10.0-macos` workload, which would also turn the console tool into an app bundle.
+
+- **`objc_msgSend` is called through a function pointer of the exact signature**, one overload per
+  arity; on arm64 it must not be treated as variadic. All arguments travel as `nint` (a `BOOL` as 0/1).
+- **The delegate is an NSObject subclass registered at run time** whose methods are
+  `[UnmanagedCallersOnly]` statics. An exception escaping one kills the process, so each goes through
+  `Guard`. CoreBluetooth calls them on a private serial dispatch queue: no run loop is needed, and
+  callbacks never overlap.
+- **Autorelease pools must be popped on the thread that pushed them**, so `ObjC.Pooled` takes a
+  *synchronous* delegate — the compiler then rejects an `await` inside a pool.
+- **There are no MAC addresses on macOS.** A peripheral has a per-Mac UUID; its first 48 bits stand in
+  for the address. Connect retrieves the peripheral by its UUID if this process has seen it, else among
+  peripherals already connected to the system, else scans for it, much like BlueZ.
+- **`connectPeripheral:` never times out** — macOS waits for the device indefinitely. It is bounded
+  by `ConnectTimeout` and cancelled in `Dispose`, which also releases the BMS's single connection.
+- **Read results and notifications share one callback** (`didUpdateValueForCharacteristic`); a value
+  that arrives while a read is pending answers the read.
+- **CoreBluetooth reports base-UUID values in short form** (`FFF0`, not the 128-bit spelling);
+  `ObjC.CBUUIDToGuid` expands them and `ObjC.CBUUID` shortens them the same way going in.
+- **Bluetooth permission belongs to the "responsible" app** — the terminal or IDE that started the
+  tool. Without it the manager's state is `Unauthorized`, reported as a readable error.
+
+Notifications on macOS go through `osascript` (`macOS/OsaScriptNotifier.cs`); an unbundled tool
+cannot use `UNUserNotificationCenter`.
+
+## Menu bar app (`BmsMenuBar/`, macOS)
+
+The Windows widget's counterpart, and built like it rather than like the plasmoid: it runs
+`BmsPoller` in-process. It has to — **macOS grants Bluetooth access per app**, and the usage
+description it requires lives in a bundle's Info.plist; a bare binary started by launchd has neither,
+so whatever owns the BLE link in the background must be inside the bundle.
+
+- **AppKit only on the main thread**, which `MenuBarApp.Run` hands to `[NSApp run]` for good. Poller
+  events, timers and restarts reach it through `ObjC.OnMainThread` (GCD's main queue); fields are only
+  mutated there. Never `await` on the main thread: it has no synchronization context, so the
+  continuation would land on a pool thread and touch AppKit from there.
+- Menu actions are one Objective-C target class whose `menuItemClicked:` dispatches on the item's `tag`.
+- `deploy-macos.sh` publishes **self-contained** (launchd gives no `DOTNET_ROOT`), copies
+  `BmsMenuBar/Info.plist` into the bundle — `NSBluetoothAlwaysUsageDescription` is mandatory, macOS
+  kills an app that touches Bluetooth without it — and **signs ad hoc**, which binds that Info.plist
+  to the executable. The ad-hoc identity changes per build, so TCC may prompt again after a deploy.
+- Started by a LaunchAgent with `KeepAlive.SuccessfulExit = false`: Quit exits 0 and stays quit, a
+  crash is restarted. SIGTERM (`launchctl bootout`, as the deploy script does) quits cleanly, so the
+  BMS's single connection is released before the new build starts. An flock on
+  `instance.lock` keeps a second copy from fighting over the BMS; it exits 0 for the same reason.
+- Settings/log: `~/Library/Application Support/BmsMonitor/settings.json`,
+  `~/Library/Logs/BmsMonitor/log.txt`. `Format.*` and the staleness rule mirror the Windows widget.
 
 ## LAN peer fallback (`Net/`)
 

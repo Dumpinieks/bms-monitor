@@ -1,8 +1,8 @@
 namespace BmsMonitor;
 
 /// <summary>
-/// Shows a desktop notification that stays up until dismissed: a Windows toast,
-/// or the org.freedesktop.Notifications D-Bus service on Linux.
+/// Shows a desktop notification: a Windows toast or an org.freedesktop.Notifications one, both
+/// of which stay up until dismissed, or a macOS Notification Centre one via osascript.
 /// Never throws - a failed notification must not break the polling loop.
 /// </summary>
 public static class Notifier
@@ -14,7 +14,10 @@ public static class Notifier
 #if WINDOWS
         BmsMonitor.Windows.ToastNotifier.Show(title, message);
 #else
-        BmsMonitor.Linux.FreeDesktopNotifier.Show(title, message);
+        if (OperatingSystem.IsMacOS())
+            BmsMonitor.MacOS.OsaScriptNotifier.Show(title, message);
+        else
+            BmsMonitor.Linux.FreeDesktopNotifier.Show(title, message);
 #endif
     }
 }

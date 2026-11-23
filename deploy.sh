@@ -40,6 +40,8 @@ usage() {
   exit 0
 }
 
+[[ $(uname -s) == Darwin ]] && die "on macOS, use ./deploy-macos.sh"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -a|--address)   ADDRESS="${2:?--address needs a value}"; shift 2 ;;

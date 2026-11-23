@@ -334,7 +334,9 @@ sealed class Options
 
         Options:
           -a, --address <mac>      BMS Bluetooth address, e.g. A4:C1:38:12:34:56
-                                   (default: search for a Daly/JBD BMS automatically)
+                                   (default: search for a Daly/JBD BMS automatically).
+                                   On macOS, which hides MAC addresses, use the one 'scan' shows
+                                   there: it is derived from macOS's own ID for the device
           -n, --name <text>        Search for a device whose name contains <text> instead
               --protocol <name>    Force protocol: JBD or Daly (default: auto-detect)
           -t, --threshold <pct>    Alert threshold in percent (default 25)
@@ -343,7 +345,8 @@ sealed class Options
               --offline-alert <min> Notify if the BMS has been unreachable for this many minutes (default off)
               --scan-time <sec>    BLE scan duration (default 10)
               --status-file [path] Publish each reading as JSON for a desktop widget to read
-                                   (default: $XDG_RUNTIME_DIR/bms-monitor/status.json)
+                                   (default: $XDG_RUNTIME_DIR/bms-monitor/status.json,
+                                   or bms-monitor/status.json in the temp directory without it)
               --share [port]       Share readings with other instances on the LAN (default port 17645)
               --peers              When the BMS is unreachable here (its single connection is
                                    taken), fetch readings from an instance running with --share

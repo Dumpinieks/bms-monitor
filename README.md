@@ -1,17 +1,20 @@
 # BmsMonitor
 
 Reads a Bluetooth LE "Smart BMS" and shows a desktop notification when the battery's state of
-charge drops to a threshold (default 25%). Runs on Windows (WinRT Bluetooth) and Linux (BlueZ).
+charge drops to a threshold (default 25%). Runs on Windows (WinRT Bluetooth), Linux (BlueZ) and
+macOS (CoreBluetooth).
 
 | Project            | Platform      | What it is                                                              |
 |--------------------|---------------|-------------------------------------------------------------------------|
 | `BmsWidget`        | Windows       | Tray icon + taskbar panel: SOC %, power (W), estimated time left; low-battery alerts |
 | `plasmoid`         | Linux / KDE   | Plasma 6 panel widget showing the same, as a native plasmoid            |
-| `BmsMonitor`       | Windows/Linux | Console tool: `scan`, `probe`, `status`, `monitor`                      |
-| `BmsMonitor.Core`  | Windows/Linux | BLE discovery, BMS protocols, polling, runtime estimate                 |
+| `BmsMenuBar`       | macOS         | Menu bar item showing the same, with details in its menu                |
+| `BmsMonitor`       | Windows/Linux/macOS | Console tool: `scan`, `probe`, `status`, `monitor`                |
+| `BmsMonitor.Core`  | Windows/Linux/macOS | BLE discovery, BMS protocols, polling, runtime estimate           |
 
 `BmsWidget` is WinForms plus Win32 taskbar interop and stays Windows-only. On Linux the equivalent is
-the [Plasma widget](#plasma-widget-kde); see [Linux](#linux) for build and run commands.
+the [Plasma widget](#plasma-widget-kde); see [Linux](#linux) for build and run commands. On macOS
+it is a [menu bar item](#menu-bar-app); see [macOS](#macos).
 
 ## Deploy
 
@@ -66,7 +69,8 @@ The BMS accepts one connection at a time: the widget, the console `monitor`, and
 
 ## Console tool
 
-Works on both platforms; the examples below use PowerShell, see [Linux](#linux) for bash.
+Works on all three platforms; the examples below use PowerShell, see [Linux](#linux) and
+[macOS](#macos) for bash.
 
 Supported protocols (auto-detected from GATT services):
 
@@ -129,6 +133,55 @@ The Windows projects can be compiled (not run) from Linux with the Windows refer
 ```bash
 dotnet build BmsMonitor.slnx -p:EnableWindowsTargeting=true
 ```
+
+## macOS
+
+Uses CoreBluetooth; nothing beyond the .NET 10 SDK is needed (no Xcode). Linux and macOS share one
+`net10.0` build, which picks its Bluetooth stack at run time.
+
+```bash
+dotnet build BmsMonitor.macOS.slnx            # Core, console tool and menu bar app
+dotnet run --project BmsMonitor -- scan
+dotnet run --project BmsMonitor -- status
+dotnet run --project BmsMonitor -- monitor -t 25 -i 60
+```
+
+- **Bluetooth permission.** The first run makes macOS ask to allow Bluetooth for the app you started
+  BmsMonitor from (Terminal, iTerm, your IDE). If it was denied, enable that app under System
+  Settings > Privacy & Security > Bluetooth.
+- **Addresses are not MAC addresses.** macOS never reveals a device's real address, only an ID it
+  assigns per Mac. `scan` shows the first 48 bits of that ID in address form; it is stable on this
+  Mac and works with `--address`, but it differs from the address the same BMS has on Windows, Linux,
+  the phone app, or another Mac.
+- **Notifications** go through `osascript`, so Notification Centre lists them under Script Editor.
+  They are banners that fade after a few seconds; to keep the low-battery alert on screen until
+  dismissed, set Script Editor's style to *Alerts* in System Settings > Notifications.
+
+### Menu bar app
+
+```bash
+./deploy-macos.sh                 # build "BMS Monitor.app", install to ~/Applications, start at login
+./deploy-macos.sh --share         # ... and share readings on the LAN (also --peers, -t, -i, -a; see --help)
+./deploy-macos.sh --uninstall     # stop it, remove the app and its LaunchAgent (settings/log are kept)
+```
+
+The menu bar shows the battery as an icon plus `61% 34W 23h45m` (charge, power drawn — `+50W` while
+charging — and time left, `▲` meaning time to full). It turns red at or below the alert threshold
+and grey when the reading is stale. Click it for voltage, current, capacity, cycles, temperatures
+and the BMS address, and for *Search for a Different BMS*, *Reload Settings*, *Open Settings File*
+and *Open Log*.
+
+- **The first start asks for Bluetooth access** — click *Allow*. The app is signed ad hoc, so macOS
+  may ask again after each `deploy-macos.sh`.
+- Settings live in `~/Library/Application Support/BmsMonitor/settings.json`, with the same keys as
+  the Windows widget (`Address`, `Threshold`, `IntervalSeconds`, `Share`, `UsePeers`, ...), plus
+  `ShowIcon`, `ShowPower` and `ShowTimeLeft` to shorten the item on a crowded (notched) menu bar.
+  Edit the file, then use *Reload Settings*. `LastAddress` is filled in automatically.
+- The log is `~/Library/Logs/BmsMonitor/log.txt` (*Open Log* shows it in Console).
+- A LaunchAgent (`org.dumpinieks.bmsmonitor`) starts it at login and restarts it if it crashes;
+  *Quit* stays quit until the next login, or open *BMS Monitor* from ~/Applications.
+- It holds the BMS's single Bluetooth connection, like the Windows widget: quit it before using the
+  console `status`/`probe` commands or the phone app.
 
 ## Plasma widget (KDE)
 

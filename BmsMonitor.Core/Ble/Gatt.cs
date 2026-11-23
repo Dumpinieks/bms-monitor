@@ -53,19 +53,20 @@ public interface IBleDevice : IDisposable
 }
 
 /// <summary>
-/// The platform's Bluetooth stack: WinRT on Windows, BlueZ over D-Bus on Linux.
+/// The platform's Bluetooth stack: WinRT on Windows, BlueZ over D-Bus on Linux, CoreBluetooth on macOS.
 /// Obtained from <see cref="BleBackend.Current"/>.
 /// </summary>
 public interface IBleBackend
 {
-    /// <summary>Short name of the stack, for diagnostics ("WinRT", "BlueZ").</summary>
+    /// <summary>Short name of the stack, for diagnostics ("WinRT", "BlueZ", "CoreBluetooth").</summary>
     string Name { get; }
 
     /// <summary>Listens for advertisements for <paramref name="duration"/> or until <paramref name="stopWhen"/> matches.</summary>
     Task<IReadOnlyCollection<SeenDevice>> ScanAsync(TimeSpan duration, Func<SeenDevice, bool>? stopWhen, CancellationToken ct);
 
     /// <summary>
-    /// Devices the stack already knows about (paired on Windows, paired or recently seen on Linux).
+    /// Devices the stack already knows about (paired on Windows, paired or recently seen on Linux,
+    /// connected to the system on macOS).
     /// A connected BMS stops advertising, so it can only be found this way.
     /// </summary>
     Task<IReadOnlyList<KnownDevice>> GetKnownDevicesAsync(CancellationToken ct);

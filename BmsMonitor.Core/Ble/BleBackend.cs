@@ -12,10 +12,13 @@ public static class BleBackend
 #if WINDOWS
         return new Windows.WinRtBleBackend();
 #else
-        if (!OperatingSystem.IsLinux())
-            throw new PlatformNotSupportedException(
-                "This build supports Linux (BlueZ) only. Build the net10.0-windows target to run on Windows.");
-        return new Linux.BlueZBleBackend();
+        // net10.0 is one build for both Unix stacks, so this choice is made at run time.
+        if (OperatingSystem.IsMacOS())
+            return new MacOS.CoreBluetoothBackend();
+        if (OperatingSystem.IsLinux())
+            return new Linux.BlueZBleBackend();
+        throw new PlatformNotSupportedException(
+            "This build supports Linux (BlueZ) and macOS (CoreBluetooth). Build the net10.0-windows target to run on Windows.");
 #endif
     }
 }
